@@ -423,7 +423,7 @@ function mailViewerMoreActions({
 
 	if (reapplyInboxRulesAction != null) {
 		moreButtons.push({
-			label: "reapplyInboxRules_action",
+			label: lang.makeTranslation("reapplyFilters_action", "Reapply filters"),
 			click: reapplyInboxRulesAction,
 			icon: Icons.Redo,
 		})

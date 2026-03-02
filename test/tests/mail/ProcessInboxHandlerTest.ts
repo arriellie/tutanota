@@ -19,6 +19,7 @@ import { SpamClassificationHandler } from "../../../src/mail-app/mail/model/Spam
 import { FolderSystem } from "../../../src/common/api/common/mail/FolderSystem"
 import { isSameId } from "../../../src/common/api/common/utils/EntityUtils"
 import { InboxRuleHandler, InboxRulesApplicationType } from "../../../src/mail-app/mail/model/InboxRuleHandler"
+import { LocalBodyFilterHandler } from "../../../src/mail-app/mail/model/LocalBodyFilterHandler"
 import { ProcessInboxHandler, UnencryptedProcessInboxDatum } from "../../../src/mail-app/mail/model/ProcessInboxHandler"
 import { MailboxDetail } from "../../../src/common/mailFunctionality/MailboxModel"
 import { LoginController } from "../../../src/common/api/main/LoginController"
@@ -39,6 +40,7 @@ o.spec("ProcessInboxHandlerTest", function () {
 	let mailboxDetail: MailboxDetail
 	let mailDetails: MailDetails
 	let inboxRuleHandler: InboxRuleHandler = object<InboxRuleHandler>()
+	let localBodyFilterHandler: LocalBodyFilterHandler = object<LocalBodyFilterHandler>()
 	let processInboxHandler: ProcessInboxHandler
 
 	const inboxFolder = createTestEntity(MailSetTypeRef, { _id: ["listId", "inbox"], folderType: MailSetKind.INBOX })
@@ -48,6 +50,7 @@ o.spec("ProcessInboxHandlerTest", function () {
 	o.beforeEach(function () {
 		spamHandler = object<SpamClassificationHandler>()
 		inboxRuleHandler = object<InboxRuleHandler>()
+		localBodyFilterHandler = object<LocalBodyFilterHandler>()
 
 		body = createTestEntity(BodyTypeRef, { text: "Body Text" })
 		mailDetails = createTestEntity(MailDetailsTypeRef, { _id: "mailDetail", body })
@@ -80,6 +83,7 @@ o.spec("ProcessInboxHandlerTest", function () {
 			cryptoFacade,
 			() => spamHandler,
 			() => inboxRuleHandler,
+			() => localBodyFilterHandler,
 			new Map(),
 			0,
 		)
@@ -362,6 +366,33 @@ o.spec("ProcessInboxHandlerTest", function () {
 		verify(mailFacade.processNewMails(assertNotNull(mail._ownerGroup), [expectedProcessInboxDatum]))
 	})
 
+	o("handleIncomingMail applies local body filter if built-in inbox rules do not match", async function () {
+		mail.sets = [inboxFolder._id]
+		const processInboxDatum: UnencryptedProcessInboxDatum = {
+			classifierType: ClientClassifierType.CUSTOMER_INBOX_RULES,
+			mailId: mail._id,
+			targetMoveFolder: trashFolder._id,
+			vectorLegacy: new Uint8Array(),
+			vectorWithServerClassifiers: new Uint8Array(),
+			ownerEncMailSessionKeys: [],
+		}
+		when(spamHandler.predictSpamForNewMail(mail, mailDetails, inboxFolder, folderSystem)).thenResolve({
+			targetFolder: inboxFolder,
+			processInboxDatum,
+		})
+		when(inboxRuleHandler.findAndApplyRulesExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder)).thenResolve(null)
+		when(inboxRuleHandler.findAndApplyRulesNotExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder)).thenResolve(null)
+		when(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder)).thenResolve({
+			targetFolder: trashFolder,
+			processInboxDatum,
+		})
+
+		const targetFolder = await processInboxHandler.handleIncomingMail(mail, inboxFolder, mailboxDetail, folderSystem, false)
+
+		verify(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder), { times: 1 })
+		o(targetFolder).deepEquals(trashFolder)
+	})
+
 	o("handleIncomingMail applies only inbox rules excluded from spam filter if spam classifier classified mail as spam", async function () {
 		mail.sets = [inboxFolder._id]
 		const processInboxDatum: UnencryptedProcessInboxDatum = {
@@ -393,6 +424,7 @@ o.spec("ProcessInboxHandlerTest", function () {
 		verify(spamHandler.predictSpamForNewMail(anything(), anything(), anything(), anything()), { times: 1 })
 		verify(inboxRuleHandler.findAndApplyRulesNotExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder), { times: 0 })
 		verify(inboxRuleHandler.findAndApplyRulesExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder), { times: 1 })
+		verify(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(anything(), anything(), anything()), { times: 0 })
 		o(targetFolder).deepEquals(spamFolder)
 		await delay(0)
 
@@ -461,6 +493,18 @@ o.spec("ProcessInboxHandlerTest", function () {
 		})
 
 		o(targetFolder).deepEquals(inboxFolder)
+	})
+
+	o("processInboxRulesOnly applies local body filters if built-in rules do not match", async function () {
+		mail.sets = [inboxFolder._id]
+		mail.processNeeded = false
+		when(inboxRuleHandler.findAndApplyMatchingRule(mailboxDetail, mail, inboxFolder, InboxRulesApplicationType.All, true)).thenResolve(null)
+		when(localBodyFilterHandler.findMatchingLocalBodyFilterTarget(mailboxDetail, mail, inboxFolder)).thenResolve(trashFolder)
+
+		const targetFolder = await processInboxHandler.processInboxRulesOnly(mail, inboxFolder, mailboxDetail)
+
+		verify(localBodyFilterHandler.findMatchingLocalBodyFilterTarget(mailboxDetail, mail, inboxFolder), { times: 1 })
+		o(targetFolder).deepEquals(trashFolder)
 	})
 
 	o("handleIncomingMail does move mail from inbox to spam folder if mail is spam", async function () {
@@ -635,6 +679,7 @@ o.spec("ProcessInboxHandlerTest", function () {
 			cryptoFacade,
 			() => spamHandler,
 			() => inboxRuleHandler,
+			() => localBodyFilterHandler,
 			new Map(),
 			0,
 		)

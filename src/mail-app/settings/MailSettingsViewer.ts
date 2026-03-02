@@ -1,5 +1,5 @@
 import m, { Children } from "mithril"
-import { assertMainOrNode, isApp, isBrowser } from "../../common/api/common/Env"
+import { assertMainOrNode, isApp, isBrowser, isDesktop } from "../../common/api/common/Env"
 import { lang, type MaybeTranslation } from "../../common/misc/LanguageViewModel"
 import type { MailboxGroupRoot, MailboxProperties, OutOfOfficeNotification, TutanotaProperties } from "../../common/api/entities/tutanota/TypeRefs.js"
 import {
@@ -32,6 +32,7 @@ import { TextField } from "../../common/gui/base/TextField.js"
 import type { TableAttrs, TableLineAttrs } from "../../common/gui/base/Table.js"
 import { ColumnWidth, createRowActions, Table } from "../../common/gui/base/Table.js"
 import * as AddInboxRuleDialog from "./AddInboxRuleDialog"
+import * as AddLocalBodyFilterDialog from "./AddLocalBodyFilterDialog"
 import { createInboxRuleTemplate } from "./AddInboxRuleDialog"
 import { ExpanderButton, ExpanderPanel } from "../../common/gui/base/Expander"
 import { IndexingNotSupportedError } from "../../common/api/common/error/IndexingNotSupportedError"
@@ -41,6 +42,7 @@ import { formatActivateState, loadOutOfOfficeNotification } from "../../common/m
 import { getSignatureType, show as showEditSignatureDialog } from "./EditSignatureDialog"
 import { showNotAvailableForFreeDialog } from "../../common/misc/SubscriptionDialogs"
 import { deviceConfig, ListAutoSelectBehavior, MailListDisplayMode } from "../../common/misc/DeviceConfig"
+import type { LocalBodyFilterRule } from "../../common/misc/DeviceConfig"
 import { IconButton, IconButtonAttrs } from "../../common/gui/base/IconButton.js"
 import { ButtonSize } from "../../common/gui/base/ButtonSize.js"
 import { getReportMovedMailsType } from "../../common/misc/MailboxPropertiesUtils.js"
@@ -73,6 +75,8 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 	_enableMailIndexing: boolean | null
 	_inboxRulesTableLines: Stream<Array<TableLineAttrs>>
 	_inboxRulesExpanded: Stream<boolean>
+	_localBodyFiltersTableLines: Stream<Array<TableLineAttrs>>
+	_localBodyFiltersExpanded: Stream<boolean>
 	_indexStateWatch: Stream<any> | null
 	_outOfOfficeNotification: LazyLoaded<OutOfOfficeNotification | null>
 	_outOfOfficeStatus: Stream<string> // stores the status label, based on whether the notification is/ or will really be activated (checking start time/ end time)
@@ -80,6 +84,7 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 	private customerInfo: CustomerInfo | null
 	private mailAddressTableModel: MailAddressTableModel | null = null
 	private mailAddressTableExpanded: boolean
+	private _localBodyFilters: LocalBodyFilterRule[] = []
 	private offlineStorageSettings = new OfflineStorageSettingsModel(mailLocator.logins.getUserController(), deviceConfig)
 
 	constructor() {
@@ -92,8 +97,10 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 		this._noAutomaticContacts = mailLocator.logins.getUserController().props.noAutomaticContacts
 		this._enableMailIndexing = mailLocator.search.indexState().mailIndexEnabled
 		this._inboxRulesExpanded = stream<boolean>(false)
+		this._localBodyFiltersExpanded = stream<boolean>(false)
 		this.mailAddressTableExpanded = false
 		this._inboxRulesTableLines = stream<Array<TableLineAttrs>>([])
+		this._localBodyFiltersTableLines = stream<Array<TableLineAttrs>>([])
 		this._outOfOfficeStatus = stream(lang.get("deactivated_label"))
 		this._indexStateWatch = null
 		// normally we would maybe like to get it as an argument but these viewers are created in an odd way
@@ -104,6 +111,9 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 		m.redraw()
 
 		this._updateInboxRules(mailLocator.logins.getUserController().props)
+		if (isDesktop()) {
+			void this._updateLocalBodyFilters()
+		}
 
 		this._mailboxProperties = new LazyLoaded(async () => {
 			const mailboxGroupRoot = await this.getMailboxGroupRoot()
@@ -306,6 +316,24 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 			addButtonAttrs: addInboxRuleButtonAttrs,
 			lines: this._inboxRulesTableLines(),
 		}
+		const localBodyFiltersTableAttrs: TableAttrs = {
+			columnHeading: [
+				lang.makeTranslation("localBodyFilterWords_heading", "Words"),
+				lang.makeTranslation("localBodyFilterTargetFolder_heading", "Target folder"),
+				lang.makeTranslation("localBodyFilterEnabled_heading", "Enabled"),
+			],
+			columnWidths: [ColumnWidth.Largest, ColumnWidth.Small, ColumnWidth.Small],
+			showActionButtonColumn: true,
+			addButtonAttrs: isDesktop()
+				? {
+						title: lang.makeTranslation("addLocalBodyFilter_action", "Add local body filter"),
+						click: () => void this.showAddLocalBodyFilterDialog(),
+						icon: Icons.Add,
+						size: ButtonSize.Compact,
+					}
+				: null,
+			lines: this._localBodyFiltersTableLines(),
+		}
 		const conversationViewDropdownAttrs: DropDownSelectorAttrs<boolean> = {
 			label: "conversationViewPref_label",
 			// show all means "false" because the pref is to "disable" it, but
@@ -414,6 +442,29 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 									}),
 								),
 							],
+					isDesktop()
+						? [
+								m(".flex-space-between.items-center.mt-32.mb-8", [
+									m(".h4#localbodyfilters", lang.makeTranslation("localBodyFilters_title", "Local body filters").text),
+									m(ExpanderButton, {
+										label: lang.makeTranslation("showLocalBodyFilters_action", "Show local body filters"),
+										expanded: this._localBodyFiltersExpanded(),
+										onExpandedChange: this._localBodyFiltersExpanded,
+									}),
+								]),
+								m(
+									ExpanderPanel,
+									{
+										expanded: this._localBodyFiltersExpanded(),
+									},
+									m(Table, localBodyFiltersTableAttrs),
+								),
+								m(
+									".small",
+									lang.makeTranslation("localBodyFiltersHelp_msg", "These filters are stored only on this desktop installation.").text,
+								),
+							]
+						: null,
 				],
 			),
 		]
@@ -508,6 +559,67 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 		})
 	}
 
+	private async _updateLocalBodyFilters(): Promise<void> {
+		if (!isDesktop()) {
+			return
+		}
+
+		const mailboxDetails = await mailLocator.mailboxModel.getUserMailboxDetails()
+		const mailGroupId = mailboxDetails.mailGroup._id
+		this._localBodyFilters = deviceConfig.getLocalBodyFilters(mailGroupId)
+		this._localBodyFiltersTableLines(
+			await promiseMap(this._localBodyFilters, async (rule, index) => ({
+				cells: [
+					rule.needle,
+					await this.getTextForTarget(mailboxDetails, rule.targetFolder),
+					rule.enabled ? lang.getTranslationText("activated_label") : lang.getTranslationText("deactivated_label"),
+				],
+				actionButtonAttrs: createRowActions(
+					{
+						getArray: () => this._localBodyFilters,
+						updateInstance: () => this.persistLocalBodyFilters(mailGroupId),
+					},
+					rule,
+					index,
+					[
+						{
+							label: "edit_action",
+							click: () => void this.showEditLocalBodyFilterDialog(mailboxDetails, rule),
+						},
+					],
+				),
+			})),
+		)
+
+		m.redraw()
+	}
+
+	private async showAddLocalBodyFilterDialog(): Promise<void> {
+		const mailboxDetails = await mailLocator.mailboxModel.getUserMailboxDetails()
+		const newRule = await AddLocalBodyFilterDialog.show(mailboxDetails, this._localBodyFilters)
+		if (newRule == null) {
+			return
+		}
+
+		this._localBodyFilters = [...this._localBodyFilters, newRule]
+		await this.persistLocalBodyFilters(mailboxDetails.mailGroup._id)
+	}
+
+	private async showEditLocalBodyFilterDialog(mailboxDetails: MailboxDetail, rule: LocalBodyFilterRule): Promise<void> {
+		const updatedRule = await AddLocalBodyFilterDialog.show(mailboxDetails, this._localBodyFilters, rule)
+		if (updatedRule == null) {
+			return
+		}
+
+		this._localBodyFilters = this._localBodyFilters.map((existingRule) => (existingRule.id === rule.id ? updatedRule : existingRule))
+		await this.persistLocalBodyFilters(mailboxDetails.mailGroup._id)
+	}
+
+	private async persistLocalBodyFilters(mailGroupId: Id): Promise<void> {
+		deviceConfig.setLocalBodyFilters(mailGroupId, this._localBodyFilters)
+		await this._updateLocalBodyFilters()
+	}
+
 	_updateOutOfOfficeNotification(): void {
 		const notification = this._outOfOfficeNotification.getLoaded()
 
@@ -536,6 +648,9 @@ export class MailSettingsViewer implements UpdatableSettingsViewer {
 				this._updateInboxRules(props)
 			} else if (isUpdateForTypeRef(MailSetTypeRef, update)) {
 				this._updateInboxRules(mailLocator.logins.getUserController().props)
+				if (isDesktop()) {
+					void this._updateLocalBodyFilters()
+				}
 			} else if (isUpdateForTypeRef(OutOfOfficeNotificationTypeRef, update)) {
 				this._outOfOfficeNotification.reload().then(() => this._updateOutOfOfficeNotification())
 			} else if (isUpdateForTypeRef(MailboxPropertiesTypeRef, update)) {

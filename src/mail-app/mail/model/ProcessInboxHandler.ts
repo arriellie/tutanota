@@ -1,5 +1,6 @@
 import { SpamClassificationHandler } from "./SpamClassificationHandler"
 import { InboxRuleHandler, InboxRulesApplicationType } from "./InboxRuleHandler"
+import { LocalBodyFilterHandler } from "./LocalBodyFilterHandler"
 import { Mail, MailSet, ProcessInboxDatum } from "../../../common/api/entities/tutanota/TypeRefs"
 import { FeatureType, MailSetKind } from "../../../common/api/common/TutanotaConstants"
 import { assertNotNull, isEmpty, Nullable, throttle } from "@tutao/tutanota-utils"
@@ -32,6 +33,7 @@ export class ProcessInboxHandler {
 		private readonly cryptoFacade: CryptoFacade,
 		private spamHandler: () => SpamClassificationHandler,
 		private readonly inboxRuleHandler: () => InboxRuleHandler,
+		private readonly localBodyFilterHandler: () => LocalBodyFilterHandler,
 		private processedMailsByMailGroup: Map<Id, UnencryptedProcessInboxDatum[]> = new Map(),
 		private readonly throttleTimeout: number = DEFAULT_THROTTLE_PROCESS_INBOX_SERVICE_REQUESTS_MS,
 	) {
@@ -106,11 +108,18 @@ export class ProcessInboxHandler {
 
 			// apply regular inbox rules only if the mail is classified as ham by the spam classifier
 			if (moveToFolder.folderType === MailSetKind.INBOX) {
-				const result = await this.inboxRuleHandler()?.findAndApplyRulesNotExcludedFromSpamFilter(mailboxDetail, mail, moveToFolder)
-				if (result) {
-					const { targetFolder, processInboxDatum } = result
+				const inboxRuleResult = await this.inboxRuleHandler()?.findAndApplyRulesNotExcludedFromSpamFilter(mailboxDetail, mail, moveToFolder)
+				if (inboxRuleResult) {
+					const { targetFolder, processInboxDatum } = inboxRuleResult
 					finalProcessInboxDatum = processInboxDatum
 					moveToFolder = targetFolder
+				} else {
+					const localBodyFilterResult = await this.localBodyFilterHandler().findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, moveToFolder)
+					if (localBodyFilterResult) {
+						const { targetFolder, processInboxDatum } = localBodyFilterResult
+						finalProcessInboxDatum = processInboxDatum
+						moveToFolder = targetFolder
+					}
 				}
 			}
 		}
@@ -161,6 +170,11 @@ export class ProcessInboxHandler {
 		if (result) {
 			const { targetFolder, processInboxDatum: _ } = result
 			moveToFolder = targetFolder
+		} else if (moveToFolder.folderType === MailSetKind.INBOX) {
+			const targetFolder = await this.localBodyFilterHandler().findMatchingLocalBodyFilterTarget(mailboxDetail, mail, moveToFolder)
+			if (targetFolder) {
+				moveToFolder = targetFolder
+			}
 		}
 
 		return moveToFolder
