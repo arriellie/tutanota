@@ -382,14 +382,14 @@ o.spec("ProcessInboxHandlerTest", function () {
 		})
 		when(inboxRuleHandler.findAndApplyRulesExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder)).thenResolve(null)
 		when(inboxRuleHandler.findAndApplyRulesNotExcludedFromSpamFilter(mailboxDetail, mail, inboxFolder)).thenResolve(null)
-		when(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder)).thenResolve({
+		when(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder, mailDetails)).thenResolve({
 			targetFolder: trashFolder,
 			processInboxDatum,
 		})
 
 		const targetFolder = await processInboxHandler.handleIncomingMail(mail, inboxFolder, mailboxDetail, folderSystem, false)
 
-		verify(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder), { times: 1 })
+		verify(localBodyFilterHandler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder, mailDetails), { times: 1 })
 		o(targetFolder).deepEquals(trashFolder)
 	})
 

@@ -114,7 +114,12 @@ export class ProcessInboxHandler {
 					finalProcessInboxDatum = processInboxDatum
 					moveToFolder = targetFolder
 				} else {
-					const localBodyFilterResult = await this.localBodyFilterHandler().findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, moveToFolder)
+					const localBodyFilterResult = await this.localBodyFilterHandler().findAndApplyMatchingLocalBodyFilter(
+						mailboxDetail,
+						mail,
+						moveToFolder,
+						mailDetails,
+					)
 					if (localBodyFilterResult) {
 						const { targetFolder, processInboxDatum } = localBodyFilterResult
 						finalProcessInboxDatum = processInboxDatum
