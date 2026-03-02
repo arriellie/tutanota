@@ -32,6 +32,13 @@ export type LastExternalCalendarSyncEntry = {
 	lastSyncStatus: SyncStatus
 }
 
+export type LocalBodyFilterRule = {
+	id: string
+	needle: string
+	targetFolder: IdTuple
+	enabled: boolean
+}
+
 /**
  * Definition of the config object that will be saved to local storage
  */
@@ -92,13 +99,14 @@ interface ConfigObject {
 	 * Which time the three days or week view will scroll to when opened
 	 */
 	scrollTime: number
+	localBodyFiltersByMailGroup: Record<Id, LocalBodyFilterRule[]>
 }
 
 /**
  * Device config for internal user auto login. Only one config per device is stored.
  */
 export class DeviceConfig implements UsageTestStorage, NewsItemStorage {
-	public static readonly Version = 7
+	public static readonly Version = 8
 	public static readonly LocalStorageKey = "tutanotaConfig"
 
 	private config!: ConfigObject
@@ -158,6 +166,7 @@ export class DeviceConfig implements UsageTestStorage, NewsItemStorage {
 			retryRatingPromptAfter: loadedConfig.retryRatingPromptAfter ?? null,
 			scrollTime: loadedConfig.scrollTime ?? 8,
 			installationDate: loadedConfig.installationDate ?? getStartOfDay(new Date()).getTime().toString(),
+			localBodyFiltersByMailGroup: cloneLocalBodyFiltersByMailGroup(loadedConfig.localBodyFiltersByMailGroup),
 		}
 
 		this.lastSyncStream(new Map(Object.entries(this.config.lastExternalCalendarSync)))
@@ -191,6 +200,15 @@ export class DeviceConfig implements UsageTestStorage, NewsItemStorage {
 
 	getScrollTime(): number {
 		return this.config.scrollTime
+	}
+
+	getLocalBodyFilters(mailGroupId: Id): LocalBodyFilterRule[] {
+		return cloneLocalBodyFilterRules(this.config.localBodyFiltersByMailGroup[mailGroupId] ?? [])
+	}
+
+	setLocalBodyFilters(mailGroupId: Id, rules: readonly LocalBodyFilterRule[]): void {
+		this.config.localBodyFiltersByMailGroup[mailGroupId] = cloneLocalBodyFilterRules(rules)
+		this.writeToStorage()
 	}
 
 	setScrollTime(time: number) {
@@ -557,6 +575,25 @@ export function migrateConfig(loadedConfig: any) {
 	if (loadedConfig._version < 7) {
 		loadedConfig.installationDate = getStartOfDay(new Date()).getTime().toString()
 	}
+
+	if (loadedConfig._version < 8) {
+		loadedConfig.localBodyFiltersByMailGroup = {}
+	}
+}
+
+function cloneLocalBodyFilterRules(rules: readonly LocalBodyFilterRule[]): LocalBodyFilterRule[] {
+	return rules.map((rule) => ({
+		...rule,
+		targetFolder: [...rule.targetFolder] as IdTuple,
+	}))
+}
+
+function cloneLocalBodyFiltersByMailGroup(source: Record<Id, LocalBodyFilterRule[]> | undefined | null): Record<Id, LocalBodyFilterRule[]> {
+	if (source == null) {
+		return {}
+	}
+
+	return Object.fromEntries(Object.entries(source).map(([mailGroupId, rules]) => [mailGroupId, cloneLocalBodyFilterRules(rules)]))
 }
 
 /**

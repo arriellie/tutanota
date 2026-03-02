@@ -421,8 +421,8 @@ export class MailView extends BaseTopLevelView implements TopLevelView<MailViewA
 
 	private getReapplyInboxRulesAction(): (() => void) | null {
 		const currentFolder = this.mailViewModel.getFolder()
-		//Inbox reapply rules should only be visible for paying users currently on the inbox folder.
-		if (!mailLocator.logins.getUserController().isPaidAccount() || currentFolder?.folderType !== MailSetKind.INBOX) {
+		// Reapply only makes sense while viewing Inbox mails.
+		if (currentFolder?.folderType !== MailSetKind.INBOX) {
 			return null
 		}
 

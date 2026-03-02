@@ -7,6 +7,7 @@ import {
 	migrateConfigV2to3,
 	migrateConfigV5to6,
 } from "../../../src/common/misc/DeviceConfig.js"
+import type { LocalBodyFilterRule } from "../../../src/common/misc/DeviceConfig.js"
 import { matchers, object, when } from "testdouble"
 import { verify } from "@tutao/tutanota-test-utils"
 import { CredentialEncryptionMode } from "../../../src/common/misc/credentials/CredentialEncryptionMode.js"
@@ -99,6 +100,19 @@ o.spec("DeviceConfig", function () {
 			migrateConfigV5to6(oldConfig, now)
 			o.check(oldConfig.offlineTimeRangeDateByUser).deepEquals({ [user]: computedDate })
 		})
+
+		o.test("migrating from v7 to v8 initializes localBodyFiltersByMailGroup", function () {
+			const oldConfig: any = {
+				_version: 7,
+				_signupToken: "token",
+			}
+
+			const localStorageMock = object<Storage>()
+			when(localStorageMock.getItem(DeviceConfig.LocalStorageKey)).thenReturn(JSON.stringify(oldConfig))
+
+			const deviceConfig = new DeviceConfig(localStorageMock)
+			o(deviceConfig.getLocalBodyFilters("mailGroup")).deepEquals([])
+		})
 	})
 
 	o.spec("loading config", function () {
@@ -156,6 +170,7 @@ o.spec("DeviceConfig", function () {
 				retryRatingPromptAfter: null,
 				scrollTime: 8,
 				mailListDisplayMode: MailListDisplayMode.MAILS,
+				localBodyFiltersByMailGroup: {},
 			}
 
 			when(localStorageMock.getItem(DeviceConfig.LocalStorageKey)).thenReturn(JSON.stringify(storedInLocalStorage))
@@ -209,6 +224,7 @@ o.spec("DeviceConfig", function () {
 				isCredentialsMigratedToNative: false,
 				offlineTimeRangeDateByUser: { userId1: getStartOfDay(getDayShifted(new Date(), -42)).getTime() },
 				installationDate: getStartOfDay(new Date()).getTime().toString(),
+				localBodyFiltersByMailGroup: {},
 			}
 
 			// We can't just call verify on localStorageMock.setItem because the JSON string may not match perfectly
@@ -220,6 +236,29 @@ o.spec("DeviceConfig", function () {
 			when(localStorageMock.getItem(DeviceConfig.LocalStorageKey)).thenReturn(null)
 
 			o.check(new DeviceConfig(localStorageMock).getMailListDisplayMode()).equals(MailListDisplayMode.CONVERSATIONS)
+		})
+
+		o.test("stores and returns cloned local body filters", function () {
+			const localStorageMock = object<Storage>()
+			when(localStorageMock.getItem(DeviceConfig.LocalStorageKey)).thenReturn(null)
+
+			const deviceConfig = new DeviceConfig(localStorageMock)
+			const rules: LocalBodyFilterRule[] = [
+				{
+					id: "rule-1",
+					needle: "invoice",
+					targetFolder: ["mailFolderList", "folder-1"],
+					enabled: true,
+				},
+			]
+
+			deviceConfig.setLocalBodyFilters("mailGroup", rules)
+			const storedRules = deviceConfig.getLocalBodyFilters("mailGroup")
+
+			o(storedRules).deepEquals(rules)
+			o(storedRules).notEquals(rules)
+			o(storedRules[0]).notEquals(rules[0])
+			o(storedRules[0].targetFolder).notEquals(rules[0].targetFolder)
 		})
 	})
 })

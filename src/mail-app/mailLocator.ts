@@ -67,6 +67,7 @@ import { OfflineIndicatorViewModel } from "../common/gui/base/OfflineIndicatorVi
 import { Router, ScopedRouter, ThrottledRouter } from "../common/gui/ScopedRouter.js"
 import { DeviceConfig, deviceConfig } from "../common/misc/DeviceConfig.js"
 import { InboxRuleHandler } from "./mail/model/InboxRuleHandler.js"
+import { LocalBodyFilterHandler } from "./mail/model/LocalBodyFilterHandler.js"
 import { SearchViewModel } from "./search/view/SearchViewModel.js"
 import { SearchRouter } from "../common/search/view/SearchRouter.js"
 import { MailOpenedListener } from "./mail/view/MailViewModel.js"
@@ -311,12 +312,23 @@ class MailLocator implements CommonLocator {
 		return new InboxRuleHandler(this.mailFacade, this.logins, this.mailModel)
 	})
 
+	readonly localBodyFilterHandler = lazyMemoized(() => {
+		return new LocalBodyFilterHandler(this.mailFacade, this.mailModel, deviceConfig)
+	})
+
 	readonly spamClassificationHandler = lazyMemoized(() => {
 		return new SpamClassificationHandler(this.spamClassifier, this.contactModel)
 	})
 
 	readonly processInboxHandler = lazyMemoized(() => {
-		return new ProcessInboxHandler(this.logins, this.mailFacade, this.cryptoFacade, this.spamClassificationHandler, this.inboxRuleHandler)
+		return new ProcessInboxHandler(
+			this.logins,
+			this.mailFacade,
+			this.cryptoFacade,
+			this.spamClassificationHandler,
+			this.inboxRuleHandler,
+			this.localBodyFilterHandler,
+		)
 	})
 
 	async searchViewModelFactory(): Promise<() => SearchViewModel> {
