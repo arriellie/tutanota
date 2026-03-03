@@ -204,7 +204,7 @@ o.spec("MailModelTest", function () {
 			verify(processInboxHandler.handleIncomingMail(anything(), anything(), anything(), anything(), true), { times: 1 })
 		})
 
-		o("does not invoke ProcessInboxHandler if the mail is already processed", async function () {
+		o("invokes processInboxRulesOnly if the mail is already processed", async function () {
 			const alreadyProcessedMail = createTestEntity(MailTypeRef, {
 				_id: ["mailListId", "processedMailId"],
 				_ownerGroup: "mailGroup",
@@ -224,6 +224,7 @@ o.spec("MailModelTest", function () {
 			await modelWithSpamAndInboxRule.entityEventsReceived([alreadyClassifiedMailCreateEvent])
 
 			verify(processInboxHandler.handleIncomingMail(anything(), anything(), anything(), anything(), true), { times: 0 })
+			verify(processInboxHandler.processInboxRulesOnly(anything(), anything(), anything()), { times: 1 })
 		})
 
 		o("does not invoke ProcessInboxHandler when downloading of mail fails on create mail event", async function () {
