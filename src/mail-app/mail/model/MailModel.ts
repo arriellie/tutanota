@@ -204,11 +204,6 @@ export class MailModel {
 					return
 				}
 
-				// check early to prevent loading the mailbox details
-				if (!mail.processNeeded) {
-					return
-				}
-
 				const sourceMailFolder = this.getMailFolderForMail(mail)
 				if (sourceMailFolder == null) {
 					return
@@ -216,12 +211,24 @@ export class MailModel {
 
 				const isLeaderClient = this.connectivityModel?.isLeader() ?? false
 				const mailboxDetail = await this.getMailboxDetailsForMail(mail)
-				const folderSystem = this.getFolderSystemByGroupId(assertNotNull(mail._ownerGroup))
 
 				let targetFolder = sourceMailFolder
 				const isInternalUser = this.logins.getUserController().isInternalUser()
-				if (isInternalUser && mailboxDetail && folderSystem) {
-					targetFolder = await this.processInboxHandler().handleIncomingMail(mail, sourceMailFolder, mailboxDetail, folderSystem, isLeaderClient)
+				if (isInternalUser && mailboxDetail) {
+					if (mail.processNeeded) {
+						const folderSystem = this.getFolderSystemByGroupId(assertNotNull(mail._ownerGroup))
+						if (folderSystem) {
+							targetFolder = await this.processInboxHandler().handleIncomingMail(
+								mail,
+								sourceMailFolder,
+								mailboxDetail,
+								folderSystem,
+								isLeaderClient,
+							)
+						}
+					} else {
+						targetFolder = await this.processInboxHandler().processInboxRulesOnly(mail, sourceMailFolder, mailboxDetail)
+					}
 				}
 				if (isWebClient()) {
 					this._showNotification(targetFolder, mail)

@@ -93,6 +93,27 @@ o.spec("LocalBodyFilterHandler", function () {
 		})
 	})
 
+	o("uses provided mail details instead of loading them again", async function () {
+		const body = createTestEntity(BodyTypeRef, { text: "<p>Your INVOICE is ready</p>" })
+		const mailDetails = createTestEntity(MailDetailsTypeRef, { _id: "mailDetail", body })
+		const mail = createTestEntity(MailTypeRef, {
+			_id: ["listId", "elementId"],
+			_ownerGroup: "owner",
+			mailDetails: ["detailsList", "mailDetail"],
+		})
+		deviceConfig.setLocalBodyFilters("owner", [{ id: "rule-1", needle: "invoice", targetFolder: targetFolder._id, enabled: true }])
+		when(mailFacade.createModelInputAndUploadableVectors(mail, mailDetails, inboxFolder)).thenResolve({
+			modelInput: [],
+			uploadableVectorLegacy: new Uint8Array([1]),
+			uploadableVector: new Uint8Array([2]),
+		})
+
+		const result = await runWithDesktopEnv(() => handler.findAndApplyMatchingLocalBodyFilter(mailboxDetail, mail, inboxFolder, mailDetails))
+
+		o(result?.targetFolder).deepEquals(targetFolder)
+		verify(mailFacade.loadMailDetailsBlob(anything()), { times: 0 })
+	})
+
 	o("skips disabled rules", async function () {
 		const body = createTestEntity(BodyTypeRef, { text: "<p>Your invoice is ready</p>" })
 		const mailDetails = createTestEntity(MailDetailsTypeRef, { _id: "mailDetail", body })

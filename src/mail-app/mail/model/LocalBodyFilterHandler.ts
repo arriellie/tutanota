@@ -25,8 +25,9 @@ export class LocalBodyFilterHandler {
 		mailboxDetail: MailboxDetail,
 		mail: Readonly<Mail>,
 		sourceFolder: MailSet,
+		preloadedMailDetails: Readonly<MailDetails> | null = null,
 	): Promise<Nullable<{ targetFolder: MailSet; processInboxDatum: UnencryptedProcessInboxDatum }>> {
-		const result = await this.findMatchingLocalBodyFilter(mailboxDetail, mail, sourceFolder)
+		const result = await this.findMatchingLocalBodyFilter(mailboxDetail, mail, sourceFolder, preloadedMailDetails)
 		if (result == null) {
 			return null
 		}
@@ -45,8 +46,13 @@ export class LocalBodyFilterHandler {
 		return { targetFolder, processInboxDatum }
 	}
 
-	async findMatchingLocalBodyFilterTarget(mailboxDetail: MailboxDetail, mail: Readonly<Mail>, sourceFolder: MailSet): Promise<MailSet | null> {
-		const result = await this.findMatchingLocalBodyFilter(mailboxDetail, mail, sourceFolder)
+	async findMatchingLocalBodyFilterTarget(
+		mailboxDetail: MailboxDetail,
+		mail: Readonly<Mail>,
+		sourceFolder: MailSet,
+		preloadedMailDetails: Readonly<MailDetails> | null = null,
+	): Promise<MailSet | null> {
+		const result = await this.findMatchingLocalBodyFilter(mailboxDetail, mail, sourceFolder, preloadedMailDetails)
 		return result?.targetFolder ?? null
 	}
 
@@ -54,6 +60,7 @@ export class LocalBodyFilterHandler {
 		mailboxDetail: MailboxDetail,
 		mail: Readonly<Mail>,
 		sourceFolder: MailSet,
+		preloadedMailDetails: Readonly<MailDetails> | null,
 	): Promise<Nullable<{ targetFolder: MailSet; mailDetails: MailDetails }>> {
 		if (!isDesktop() || sourceFolder.folderType !== MailSetKind.INBOX || mail._errors || mail._ownerGroup == null) {
 			return null
@@ -65,7 +72,7 @@ export class LocalBodyFilterHandler {
 		}
 
 		try {
-			const mailDetails = await this.mailFacade.loadMailDetailsBlob(mail)
+			const mailDetails = preloadedMailDetails ?? (await this.mailFacade.loadMailDetailsBlob(mail))
 			const normalizedBody = htmlToText(getMailBodyText(mailDetails.body)).toLowerCase()
 			const folders = await this.mailModel.getMailboxFoldersForId(mailboxDetail.mailbox.mailSets._id)
 
