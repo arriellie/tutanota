@@ -95,6 +95,7 @@ o.spec("MailModelTest", function () {
 	o.spec("Inbox rule processing and spam prediction", () => {
 		let inboxRuleHandler: InboxRuleHandler
 		let mailboxModel: MailboxModel
+		let mailboxDetailForMail: MailboxDetail
 		let modelWithSpamAndInboxRule: MailModel
 		let mail: Mail
 		let mailDetails: MailDetails
@@ -154,7 +155,8 @@ o.spec("MailModelTest", function () {
 						o(groupId).equals("mailGroup")
 						return new FolderSystem([inboxFolder, spamFolder, anotherFolder])
 					}
-					m.getMailboxDetailsForMail = async (_: Mail) => object<MailboxDetail>()
+					mailboxDetailForMail = object<MailboxDetail>()
+					m.getMailboxDetailsForMail = async (_: Mail) => mailboxDetailForMail
 				},
 			)
 		})
@@ -214,6 +216,7 @@ o.spec("MailModelTest", function () {
 			})
 			restClient.addListInstances(alreadyProcessedMail)
 			when(mailFacade.loadMailDetailsBlob(alreadyProcessedMail)).thenResolve(mailDetails)
+			when(processInboxHandler.processInboxRulesOnly(alreadyProcessedMail, inboxFolder, mailboxDetailForMail)).thenResolve(anotherFolder)
 
 			const alreadyClassifiedMailCreateEvent = makeUpdate({
 				instanceListId: "mailListId",
@@ -224,7 +227,7 @@ o.spec("MailModelTest", function () {
 			await modelWithSpamAndInboxRule.entityEventsReceived([alreadyClassifiedMailCreateEvent])
 
 			verify(processInboxHandler.handleIncomingMail(anything(), anything(), anything(), anything(), true), { times: 0 })
-			verify(processInboxHandler.processInboxRulesOnly(anything(), anything(), anything()), { times: 1 })
+			verify(processInboxHandler.processInboxRulesOnly(alreadyProcessedMail, inboxFolder, mailboxDetailForMail), { times: 1 })
 		})
 
 		o("does not invoke ProcessInboxHandler when downloading of mail fails on create mail event", async function () {
