@@ -84,6 +84,16 @@ import { CommonNativeFacade } from "../native/common/generatedipc/CommonNativeFa
 
 mp()
 
+// Keep this fork's persisted desktop state separate from upstream installs.
+try {
+	const packageJson = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), "package.json"), "utf8"))
+	if (typeof packageJson.name === "string" && packageJson.name.length > 0) {
+		app.setPath("userData", path.join(app.getPath("appData"), `${packageJson.name}-settings`))
+	}
+} catch (e) {
+	console.error("Could not override userData path", e)
+}
+
 dns.setDefaultResultOrder("ipv4first")
 
 setupAssetProtocol(electron)

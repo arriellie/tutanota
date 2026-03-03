@@ -18,8 +18,11 @@ import { getElectronVersion } from "./getInstalledModuleVersion.js"
  * @param p.architecture
  */
 export default async function generateTemplate({ nameSuffix, version, updateUrl, iconPath, sign, notarize, unpacked, architecture }) {
-	const appName = "tutanota-desktop" + nameSuffix
-	const appId = "de.tutao.tutanota" + nameSuffix
+	const suffixLabel = nameSuffix.length > 0 ? nameSuffix.slice(1) : ""
+	const suffixDisplayLabel = suffixLabel.length > 0 ? `${suffixLabel[0].toUpperCase()}${suffixLabel.slice(1)}` : ""
+	const appName = "ellie-mail" + nameSuffix
+	const appId = suffixLabel ? `de.tutao.elliemail.${suffixLabel}` : "de.tutao.elliemail"
+	const productName = suffixDisplayLabel ? `Ellie Mail ${suffixDisplayLabel}` : "Ellie Mail"
 	if (process.env.JENKINS_HOME && process.env.DEBUG_SIGN) throw new Error("Tried to DEBUG_SIGN in CI!")
 	const debugKey = process.env.DEBUG_SIGN ? readFileSync(path.join(process.env.DEBUG_SIGN, "test.pubkey"), { encoding: "utf8" }) : undefined
 	const log = console.log.bind(console)
@@ -37,7 +40,7 @@ export default async function generateTemplate({ nameSuffix, version, updateUrl,
 		electronVersion: await getElectronVersion(log),
 		icon: iconPath,
 		appId: appId,
-		productName: nameSuffix.length > 0 ? nameSuffix.slice(1) + " Tuta Mail" : "Tuta Mail",
+		productName,
 		// name of the appImage
 		artifactName: "${name}-${os}.${ext}",
 		asarUnpack: "desktop/*.node",
