@@ -23,6 +23,7 @@ import {
 	Keys,
 	MailAuthenticationStatus,
 	MailMethod,
+	UNDO_SEND_TIMEOUT_SECONDS,
 } from "../../../common/api/common/TutanotaConstants"
 import { TooManyRequestsError } from "../../../common/api/common/error/RestError"
 import type { DialogHeaderBarAttrs } from "../../../common/gui/base/DialogHeaderBar"
@@ -44,8 +45,8 @@ import {
 	Contact,
 	ContactTypeRef,
 	ConversationEntry,
+	ConversationEntryTypeRef,
 	createTranslationGetIn,
-	File as TutanotaFile,
 	Mail,
 	MailboxProperties,
 	MailDetails,
@@ -65,7 +66,13 @@ import {
 	throttle,
 	typedValues,
 } from "@tutao/tutanota-utils"
-import { createInlineImage, replaceCidsWithInlineImages, replaceInlineImagesWithCids, showDownloadProgressDialog } from "../view/MailGuiUtils"
+import {
+	createInlineImage,
+	replaceCidsWithInlineImages,
+	replaceInlineImagesWithCids,
+	showDownloadProgressDialog,
+	showUndoMailSnackbar,
+} from "../view/MailGuiUtils"
 import { client } from "../../../common/misc/ClientDetector"
 import { appendEmailSignature } from "../signature/Signature"
 import { showTemplatePopupInEditor } from "../../templates/view/TemplatePopup"
@@ -126,6 +133,9 @@ import { Time } from "../../../common/calendar/date/Time"
 import { getStartOfTheWeekOffsetForUser } from "../../../common/misc/weekOffset"
 import { getTimeFormatForUser } from "../../../common/api/common/utils/UserUtils"
 import { showNotAvailableForFreeDialog } from "../../../common/misc/SubscriptionDialogs"
+import { deviceConfig } from "../../../common/misc/DeviceConfig"
+import { showInfoSnackbar } from "../../../common/gui/base/SnackBar"
+import { loadMailDetails } from "../view/MailViewerUtils"
 
 // Interval where we save drafts locally.
 //
@@ -135,6 +145,9 @@ const AUTOSAVE_LOCAL_TIMEOUT: number = secondsToMillis(5)
 
 // If the editor is left untouched for this amount of time, then the draft will automatically save to the server.
 const AUTOSAVE_REMOTE_TIMEOUT: number = minutesToMillis(5)
+
+// Maximum allowed time before the undo button hides.
+const UNDO_SEND_TIMEOUT: number = secondsToMillis(UNDO_SEND_TIMEOUT_SECONDS)
 
 export type MailEditorAttrs = {
 	model: SendMailModel
@@ -184,8 +197,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 		bcc: stream(""),
 	}
 
-	mentionedInlineImages: Array<string>
-	inlineImageElements: Array<HTMLElement>
+	mentionedInlineImages: Array<{ cid: string; url: string }>
 	templateModel: TemplatePopupModel | null
 	knowledgeBaseInjection: DialogInjectionRightAttrs<KnowledgebaseDialogContentAttrs> | null = null
 	sendMailModel: SendMailModel
@@ -205,7 +217,6 @@ export class MailEditor implements Component<MailEditorAttrs> {
 	constructor(vnode: Vnode<MailEditorAttrs>) {
 		const a = vnode.attrs
 		this.attrs = a
-		this.inlineImageElements = []
 		this.mentionedInlineImages = []
 		const model = a.model
 		this.sendMailModel = model
@@ -248,14 +259,13 @@ export class MailEditor implements Component<MailEditorAttrs> {
 
 				this.blockedExternalContent = sanitized.blockedExternalContent
 
-				this.mentionedInlineImages = sanitized.inlineImageCids
 				return sanitized.fragment
 			},
 			null,
 		)
 
 		const onEditorChanged = () => {
-			cleanupInlineAttachments(this.editor.getDOM(), this.inlineImageElements, model.getAttachments())
+			cleanupInlineAttachments(this.editor.getDOM(), this.mentionedInlineImages, model.getAttachments())
 			model.markAsChangedIfNecessary(true)
 			m.redraw()
 		}
@@ -453,6 +463,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 					icon: Icons.More,
 					title: "showText_action",
 					size: ButtonSize.Normal,
+					colors: ButtonColor.MailTextEditor,
 					click: () => this.expandQuotedReply(quoteWrap),
 				}),
 			),
@@ -549,7 +560,9 @@ export class MailEditor implements Component<MailEditorAttrs> {
 			oninput: (val) => model.setSubject(val),
 		}
 
-		const attachmentBubbleAttrs = createAttachmentBubbleAttrs(model, this.inlineImageElements)
+		const attachmentBubbleAttrs = createAttachmentBubbleAttrs(model, this.mentionedInlineImages, () => {
+			return this.editor.getDOM()
+		})
 
 		let editCustomNotificationMailAttrs: IconButtonAttrs | null = null
 
@@ -875,7 +888,7 @@ export class MailEditor implements Component<MailEditorAttrs> {
 	}
 
 	private processInlineImages() {
-		this.inlineImageElements = replaceCidsWithInlineImages(this.editor.getDOM(), this.sendMailModel.loadedInlineImages, (cid, event, dom) => {
+		this.mentionedInlineImages = replaceCidsWithInlineImages(this.editor.getDOM(), this.sendMailModel.loadedInlineImages, (cid, event, dom) => {
 			const downloadClickHandler = createDropdown({
 				lazyButtons: () => [
 					{
@@ -948,12 +961,11 @@ export class MailEditor implements Component<MailEditorAttrs> {
 		for (const file of files) {
 			const img = createInlineImage(file as DataFile)
 			model.loadedInlineImages.set(img.cid, img)
-			this.inlineImageElements.push(
-				this.editor.insertImage(img.objectUrl, {
-					cid: img.cid,
-					style: "max-width: 100%",
-				}),
-			)
+			this.mentionedInlineImages.push({ cid: img.cid, url: img.objectUrl })
+			this.editor.insertImage(img.objectUrl, {
+				cid: img.cid,
+				style: "max-width: 100%",
+			})
 		}
 		m.redraw()
 	}
@@ -1246,16 +1258,56 @@ async function createMailEditorDialog(model: SendMailModel, blockExternalContent
 			// Note: model.send() will save without checking for conflicts, but unlike saving, send() will only ever be
 			// triggered by the user, so this is acceptable.
 			const sendAtDate = model.getSendAtDate()
-			const success = await model.send(
+			const allowUndo = model.undoModel != null && deviceConfig.getIsUndoSendEnabled()
+
+			const { success, sendJob } = await model.send(
 				MailMethod.NONE,
 				Dialog.confirm,
 				showProgressDialog,
 				sendAtDate,
 				sendAtDate ? "tooManyScheduledMails_msg" : undefined,
+				allowUndo,
 			)
 			if (success) {
 				dispose()
 				dialog.close()
+
+				// Undoing is not possible for approval mails, and scheduled mails (should just go to the scheduled folder and cancel it)
+				// But for consistency we always show something to confirm the email was sent/scheduled, since it will be expected for a snackbar to appear
+				if (allowUndo && sendJob != null) {
+					// sent mail that can be undone
+					const sentMail = assertNotNull(model.draft?._id)
+
+					showUndoMailSnackbar(
+						model.undoModel,
+						async () => {
+							if (model.draft) {
+								await model.mailFacade.undoSendMail(sentMail, sendJob)
+								const conversationEntry = await model.entity.load(ConversationEntryTypeRef, model.draft.conversationEntry)
+								// blockExternalContent is just passed as true here, this should be fine as the lookup should find the actual setting and this is just used as a fallback
+								const editorDialog = await newMailEditorFromDraft(
+									model.draft,
+									await loadMailDetails(model.mailFacade, model.draft),
+									conversationEntry,
+									model.getAttachments(),
+									model.loadedInlineImages,
+									true,
+									undefined,
+									model.mailboxDetails,
+								)
+								editorDialog?.show()
+							}
+						},
+						lang.getTranslation("emailSent_msg"),
+						UNDO_SEND_TIMEOUT,
+					)
+				} else if (sendAtDate) {
+					// scheduled mail
+					showInfoSnackbar("emailScheduled_msg")
+				} else {
+					// sent mail that cannot be undone, like approval mail
+					showInfoSnackbar("emailSent_msg")
+				}
 
 				const { handleRatingByEvent } = await import("../../../common/ratings/UserSatisfactionDialog.js")
 				void handleRatingByEvent("Mail")
@@ -1551,7 +1603,7 @@ export async function newMailEditorFromDraft(
 	mail: Mail,
 	mailDetails: MailDetails,
 	conversationEntry: ConversationEntry,
-	attachments: TutanotaFile[],
+	attachments: Attachment[],
 	inlineImages: InlineImages,
 	blockExternalContent: boolean,
 	localDraftData?: LocalAutosavedDraftData,

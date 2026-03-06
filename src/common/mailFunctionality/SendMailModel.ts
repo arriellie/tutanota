@@ -89,6 +89,7 @@ import { EventInviteEmailType } from "../../calendar-app/calendar/view/CalendarN
 import { SyncTracker } from "../api/main/SyncTracker"
 import { AutosaveFacade } from "../api/worker/facades/lazy/AutosaveFacade"
 import { Time } from "../calendar/date/Time"
+import { UndoModel } from "../../mail-app/UndoModel"
 import { isAliasEnabledForGroupInfo } from "../api/common/utils/GroupUtils"
 
 assertMainOrNode()
@@ -203,6 +204,7 @@ export class SendMailModel {
 		private readonly autosaveFacade: AutosaveFacade,
 		private readonly needNewDraft: (mail: Mail) => Promise<boolean>,
 		private readonly syncTracker: SyncTracker,
+		readonly undoModel: UndoModel | null,
 	) {
 		const userProps = logins.getUserController().props
 		this.senderAddress = this.getDefaultSender()
@@ -495,7 +497,7 @@ export class SendMailModel {
 		draft: Mail,
 		draftDetails: MailDetails,
 		conversationEntry: ConversationEntry,
-		attachments: TutanotaFile[],
+		attachments: Attachment[],
 		inlineImages: InlineImages,
 	): Promise<SendMailModel> {
 		this.startInit()
@@ -968,10 +970,11 @@ export class SendMailModel {
 	async send(
 		mailMethod: MailMethod,
 		getConfirmation: (arg0: MaybeTranslation) => Promise<boolean> = (_) => Promise.resolve(true),
-		waitHandler: (arg0: MaybeTranslation, arg1: Promise<any>) => Promise<any> = (_, p) => p,
+		waitHandler: (arg0: MaybeTranslation, arg1: Promise<SendMailResult>) => Promise<unknown> = (_, p) => p,
 		sendAt: Date | null = null,
 		tooManyRequestsError: TranslationKey = "tooManyMails_msg",
-	): Promise<boolean> {
+		allowUndo: boolean = false,
+	): Promise<SendMailResult> {
 		// To avoid parallel invocations do not do anything async here that would later execute the sending.
 		// It is fine to wait for getConfirmation() because it is modal and will prevent the user from triggering multiple sends.
 		// If you need to do something async here put it into `asyncSend`
@@ -982,7 +985,10 @@ export class SendMailModel {
 		if (this.allRecipients().length === 1 && this.allRecipients()[0].address.toLowerCase().trim() === "approval@tutao.de") {
 			await this.sendApprovalMail(this.getBody())
 			await this.clearLocalAutosave() // because this approval mail is "sent" in an odd way, it will not clear the local autosave
-			return true
+			return {
+				success: true,
+				sendJob: null,
+			}
 		}
 
 		if (this.toRecipients().length === 0 && this.ccRecipients().length === 0 && this.bccRecipients().length === 0) {
@@ -993,12 +999,18 @@ export class SendMailModel {
 
 		// Many recipients is a warning
 		if (numVisibleRecipients >= TOO_MANY_VISIBLE_RECIPIENTS && !(await getConfirmation("manyRecipients_msg"))) {
-			return false
+			return {
+				success: false,
+				sendJob: null,
+			}
 		}
 
 		// Empty subject is a warning
 		if (this.getSubject().length === 0 && !(await getConfirmation("noSubject_msg"))) {
-			return false
+			return {
+				success: false,
+				sendJob: null,
+			}
 		}
 
 		const asyncSend = async () => {
@@ -1013,23 +1025,40 @@ export class SendMailModel {
 
 			// Weak password is a warning
 			if (this.isConfidentialExternal() && this.hasInsecurePasswords() && !(await getConfirmation("presharedPasswordNotStrongEnough_msg"))) {
-				return false
+				return {
+					success: false,
+					sendJob: null,
+				}
 			}
 
-			// Don't safe unnecessarily.
-			if (this.hasMailChanged() || this.draft == null) {
+			// The draft might have been moved, sent, or scheduled from another client
+			// So load up-to-date mail when checking if a new draft is needed
+			if (this.hasMailChanged() || this.draft == null || (await this.needNewDraft(await this.entity.load(MailTypeRef, this.draft._id)))) {
+				// Don't save unnecessarily.
 				await this.saveDraft(true, mailMethod)
 			}
 
 			await this.updateContacts(recipients)
-			await this.mailFacade.sendDraft(assertNotNull(this.draft, "draft was null?"), recipients, this.selectedNotificationLanguage, sendAt)
+			const sendReturn = await this.mailFacade.sendDraft(
+				assertNotNull(this.draft, "draft was null?"),
+				recipients,
+				this.selectedNotificationLanguage,
+				sendAt,
+				allowUndo,
+			)
 			await this.clearLocalAutosave() // no need to keep a local copy of a draft of an email that was sent
 			await this.updatePreviousMail()
-			await this.updateExternalLanguage()
-			return true
+			this.updateExternalLanguage()
+			return {
+				success: true,
+				sendJob: sendReturn.sendJob,
+			}
 		}
 
-		return waitHandler(this.getWaitMessage(), asyncSend())
+		const sendPromise = asyncSend()
+
+		return waitHandler(this.getWaitMessage(), sendPromise)
+			.then(() => sendPromise, undefined)
 			.catch(
 				ofClass(LockedError, () => {
 					throw new UserError("operationStillActive_msg")
@@ -1066,7 +1095,10 @@ export class SendMailModel {
 					// special case: the approval status is set to SpamSender, but the update has not been received yet, so use SpamSender as default
 					return checkApprovalStatus(this.logins, true, ApprovalStatus.SPAM_SENDER).then(() => {
 						console.log("could not send mail (blocked access)", e)
-						return false
+						return {
+							success: false,
+							sendJob: null,
+						}
 					})
 				}),
 			)
@@ -1099,6 +1131,11 @@ export class SendMailModel {
 					import("../settings/keymanagement/KeyVerificationRecoveryDialog.js").then(({ showMultiRecipientsKeyVerificationRecoveryDialog }) =>
 						showMultiRecipientsKeyVerificationRecoveryDialog(failedRecipients),
 					)
+
+					return {
+						success: false,
+						sendJob: null,
+					}
 				}),
 			)
 	}
@@ -1163,7 +1200,8 @@ export class SendMailModel {
 			this._draftSavedRecently = true
 			this.waitUntilSync = false
 
-			//load the updated mail to check if the draft is already scheduled in another client
+			// the draft might have been moved, sent, or scheduled from another client.
+			// Load up-to-date mail when checking if a new draft is needed
 			const upToDateDraft = this.draft && (await this.entity.load(MailTypeRef, this.draft._id))
 			this.draft =
 				upToDateDraft == null || (await this.needNewDraft(upToDateDraft))
@@ -1432,4 +1470,9 @@ function recipientsFilter(recipientList: ReadonlyArray<PartialRecipient>): Array
 			cleaned: cleanMailAddress(a.address),
 		}))
 	return deduplicate(cleanedList, (a, b) => a.cleaned === b.cleaned).map((a) => a.recipient)
+}
+
+export interface SendMailResult {
+	success: boolean
+	sendJob: IdTuple | null
 }

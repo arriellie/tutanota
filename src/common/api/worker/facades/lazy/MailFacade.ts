@@ -90,6 +90,7 @@ import {
 	ProcessInboxDatum,
 	ReportedMailFieldMarker,
 	SendDraftParameters,
+	SendDraftReturn,
 	SymEncInternalRecipientKeyData,
 	SymEncInternalRecipientKeyDataTypeRef,
 	TutanotaPropertiesTypeRef,
@@ -131,7 +132,17 @@ import { BlobFacade } from "./BlobFacade.js"
 import { assertWorkerOrNode, isApp, isDesktop } from "../../../common/Env.js"
 import { EntityClient } from "../../../common/EntityClient.js"
 import { getEnabledMailAddressesForGroupInfo, getUserGroupMemberships, isAliasEnabledForGroupInfo } from "../../../common/utils/GroupUtils.js"
-import { containsId, elementIdPart, getElementId, getLetId, isSameId, listIdPart, stringToCustomId, StrippedEntity } from "../../../common/utils/EntityUtils.js"
+import {
+	containsId,
+	elementIdPart,
+	getElementId,
+	getLetId,
+	getListId,
+	isSameId,
+	listIdPart,
+	stringToCustomId,
+	StrippedEntity,
+} from "../../../common/utils/EntityUtils.js"
 import { htmlToText } from "../../../common/utils/IndexUtils.js"
 import { MailBodyTooLargeError } from "../../../common/error/MailBodyTooLargeError.js"
 import { UNCOMPRESSED_MAX_SIZE } from "../../Compression.js"
@@ -587,7 +598,7 @@ export class MailFacade {
 		})
 	}
 
-	async sendDraft(draft: Mail, recipients: Array<Recipient>, language: string, sendAt: Date | null): Promise<void> {
+	async sendDraft(draft: Mail, recipients: Array<Recipient>, language: string, sendAt: Date | null, allowUndo: boolean = false): Promise<SendDraftReturn> {
 		const senderMailGroupId = await this._getMailGroupIdForMailAddress(this.userFacade.getLoggedInUser(), draft.sender.address)
 		const bucketKey = aes256RandomKey()
 		const parameters: StrippedEntity<SendDraftParameters> = {
@@ -654,12 +665,18 @@ export class MailFacade {
 			...parameters,
 			parameters: createSendDraftParameters(parameters),
 			sendAt,
+			allowUndo,
 		})
-		await this.serviceExecutor.post(SendDraftService, sendDraftData)
+
+		return await this.serviceExecutor.post(SendDraftService, sendDraftData)
 	}
 
 	async unscheduleMail(mail: IdTuple) {
-		await this.serviceExecutor.delete(SendDraftService, createSendDraftDeleteIn({ mail }))
+		await this.serviceExecutor.delete(SendDraftService, createSendDraftDeleteIn({ mail, sendJob: null }))
+	}
+
+	async undoSendMail(mail: IdTuple, sendJob: IdTuple) {
+		await this.serviceExecutor.delete(SendDraftService, createSendDraftDeleteIn({ mail, sendJob }))
 	}
 
 	async getAttachmentIds(draft: Mail): Promise<IdTuple[]> {
@@ -1116,7 +1133,7 @@ export class MailFacade {
 		if (mail.mailDetailsDraft != null) {
 			throw new ProgrammingError("not supported, must be mail details blob")
 		} else {
-			const mailDetailsBlobId = assertNotNull(mail.mailDetails)
+			const mailDetailsBlobId = assertNotNull(mail.mailDetails, `null mailDetails on non-draft mail with id: ${getListId(mail)}/${getElementId(mail)}`)
 
 			const mailDetailsBlobs = await this.entityClient.loadMultiple(
 				MailDetailsBlobTypeRef,
