@@ -244,6 +244,7 @@ async function setupSuite({ integration }: { integration?: boolean }) {
 		await import("./desktop/ElectronUpdaterTest.js")
 		await import("./desktop/PathUtilsTest.js")
 		await import("./desktop/SocketeerTest.js")
+		await import("./desktop/UserDataPathTest.js")
 		await import("./desktop/config/ConfigFileTest.js")
 		await import("./desktop/config/DesktopConfigTest.js")
 		await import("./desktop/DesktopUtilsTest.js")
