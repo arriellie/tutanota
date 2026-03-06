@@ -81,15 +81,13 @@ import { makeSuspensionAwareFetch } from "./net/SuspensionAwareFetch"
 import { SuspensionHandler } from "../api/worker/SuspensionHandler"
 import { DesktopErrorHandler } from "./DesktopErrorHandler"
 import { CommonNativeFacade } from "../native/common/generatedipc/CommonNativeFacade"
+import { overrideUserDataPath } from "./UserDataPath.js"
 
 mp()
 
 // Keep this fork's persisted desktop state separate from upstream installs.
 try {
-	const packageJson = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), "package.json"), "utf8"))
-	if (typeof packageJson.name === "string" && packageJson.name.length > 0) {
-		app.setPath("userData", path.join(app.getPath("appData"), `${packageJson.name}-settings`))
-	}
+	overrideUserDataPath(app, fs)
 } catch (e) {
 	console.error("Could not override userData path", e)
 }
