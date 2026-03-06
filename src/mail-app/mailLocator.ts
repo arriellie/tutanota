@@ -466,6 +466,7 @@ class MailLocator implements CommonLocator {
 		const { SendMailModel } = await import("../common/mailFunctionality/SendMailModel.js")
 		const recipientsModel = await this.recipientsModel()
 		const dateProvider = await this.noZoneDateProvider()
+		const undoModel = await this.undoModel()
 		return () =>
 			new SendMailModel(
 				this.mailFacade,
@@ -483,6 +484,7 @@ class MailLocator implements CommonLocator {
 					return !isEditableDraft(mail) || (await isMailInSpamOrTrash(mail, mailLocator.mailModel))
 				},
 				this.syncTracker,
+				undoModel,
 			)
 	}
 

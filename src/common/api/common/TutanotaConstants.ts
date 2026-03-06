@@ -57,6 +57,10 @@ export function isFolderReadOnly(mailSet: MailSet) {
 	return READ_ONLY_SYSTEM_FOLDERS.includes(mailSet.folderType as MailSetKind)
 }
 
+export function isPermanentDeleteAllowedForFolder(mailSet: MailSet) {
+	return isPermanentDeleteAllowedMailSetKind(mailSet.folderType as MailSetKind)
+}
+
 export function isNestableMailSet(mailSet: MailSet): boolean {
 	return mailSet.folderType === MailSetKind.CUSTOM
 }
@@ -110,6 +114,25 @@ export function isEditableMailSet(mailSet: MailSet): boolean {
 		case MailSetKind.TRASH:
 		case MailSetKind.ARCHIVE:
 		case MailSetKind.SPAM:
+		case MailSetKind.ALL:
+		case MailSetKind.IMPORTED:
+		case MailSetKind.SCHEDULED:
+		default:
+			return false
+	}
+}
+
+export function isPermanentDeleteAllowedMailSetKind(mailsetKind: MailSetKind) {
+	switch (mailsetKind) {
+		case MailSetKind.TRASH:
+		case MailSetKind.SPAM:
+			return true
+		case MailSetKind.CUSTOM:
+		case MailSetKind.LABEL:
+		case MailSetKind.INBOX:
+		case MailSetKind.DRAFT:
+		case MailSetKind.SENT:
+		case MailSetKind.ARCHIVE:
 		case MailSetKind.ALL:
 		case MailSetKind.IMPORTED:
 		case MailSetKind.SCHEDULED:
@@ -521,6 +544,7 @@ export const enum ConversationType {
 }
 
 export const enum MailState {
+	/** BEWARE: mails queued to be sent have a state of SENDING _before_ mail details is stored as a blob */
 	DRAFT = "0",
 	SENT = "1",
 	RECEIVED = "2",
@@ -1555,3 +1579,4 @@ export const CANCEL_UPLOAD_EVENT = "CANCEL_UPLOAD_EVENT"
  */
 export const MAX_WORD_FREQUENCY = 31
 export const DEFAULT_VECTOR_MAX_LENGTH = 2048
+export const UNDO_SEND_TIMEOUT_SECONDS = 10

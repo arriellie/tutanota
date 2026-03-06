@@ -714,7 +714,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 											trashMails(mailViewerModel.mailboxModel, mailViewerModel.mailModel, this.undoModel, [mailViewerModel.mail])
 										}
 									: null,
-								delete: mailViewerModel.isDeletableMail()
+								delete: mailViewerModel.isDeletingMailAllowed()
 									? () => promptAndDeleteMails(mailViewerModel.mailModel, [mailViewerModel.mail._id], null, noOp)
 									: null,
 								move: mailViewerModel.isMovableMail()
@@ -726,6 +726,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 												dom.getBoundingClientRect(),
 												[mailViewerModel.mail],
 												MoveMode.Mails,
+												mailLocator.contactModel,
 											)
 										}
 									: null,
@@ -870,7 +871,16 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	private getMoveMailsAction(): ((origin: PosRect, opts?: ShowMoveMailsDropdownOpts) => void) | null {
 		const selection = this.searchViewModel.getSelectedMails()
 		return selection.some((mail) => isMailMovable(mail, mailLocator.mailModel))
-			? (origin, opts) => showMoveMailsDropdown(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, origin, selection, MoveMode.Mails, opts)
+			? (origin, opts) =>
+					showMoveMailsDropdown(
+						mailLocator.mailboxModel,
+						mailLocator.mailModel,
+						this.undoModel,
+						origin,
+						selection,
+						MoveMode.Mails,
+						mailLocator.contactModel,
+					)
 			: null
 	}
 
@@ -1325,13 +1335,15 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 		const selectedMails = this.searchViewModel.getSelectedMails()
 
 		if (selectedMails.length > 0) {
-			showMoveMailsDropdown(mailLocator.mailboxModel, mailLocator.mailModel, this.undoModel, getDetachedDropdownBounds(), selectedMails, MoveMode.Mails, {
-				onSelected: () => {
-					if (selectedMails.length > 1) {
-						this.searchViewModel.listModel.selectNone()
-					}
-				},
-			})
+			showMoveMailsDropdown(
+				mailLocator.mailboxModel,
+				mailLocator.mailModel,
+				this.undoModel,
+				getDetachedDropdownBounds(),
+				selectedMails,
+				MoveMode.Mails,
+				mailLocator.contactModel,
+			)
 		}
 	}
 
@@ -1353,7 +1365,7 @@ export class SearchView extends BaseTopLevelView implements TopLevelView<SearchV
 	private getDeleteAndTrashActions(): { deleteAction: (() => unknown) | null; trashAction: (() => unknown) | null } {
 		if (isSameTypeRef(this.searchViewModel.searchedType, MailTypeRef)) {
 			const selected = this.searchViewModel.getSelectedMails()
-			const deletable = this.searchViewModel.areMailsDeletable()
+			const deletable = this.searchViewModel.isPermanentDeleteAllowed()
 
 			if (deletable && isNotEmpty(selected)) {
 				return {
